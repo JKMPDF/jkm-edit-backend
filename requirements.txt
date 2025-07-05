@@ -3,3 +3,5 @@ gunicorn
 python-docx
 PyMuPDF
 Flask-Cors
+pytesseract
+Pillow
