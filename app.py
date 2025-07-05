@@ -19,3 +19,7 @@ def process_file(job_id, pdf_path, docx_path):
         jobs[job_id]['error'] = str(e)
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
+from flask import Flask
+app = Flask(__name__)
+
