@@ -1,0 +1,5 @@
+Flask
+gunicorn
+python-docx
+PyMuPDF
+Flask-Cors
