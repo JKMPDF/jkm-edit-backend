@@ -32,31 +32,30 @@ def process_file(job_id, pdf_path, docx_path):
     try:
         jobs[job_id]['status'] = 'PROCESSING'
 
-        # Check if PDF file starts with '%PDF'
         with open(pdf_path, 'rb') as f:
             if not f.read(5).startswith(b'%PDF'):
                 raise Exception("Uploaded file is not a valid PDF")
 
-        # Convert PDF to images
         images = convert_from_path(pdf_path, dpi=300)
-
-        # Create Word document and OCR each image
         doc = Document()
+
+        def clean_text(text):
+            import re
+            return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text)
+
         for img in images:
-            text = pytesseract.image_to_string(img, lang='eng')
-            doc.add_paragraph(text)
+            raw_text = pytesseract.image_to_string(img, lang='eng')
+            cleaned_text = clean_text(raw_text)
+            doc.add_paragraph(cleaned_text)
 
-        # Save Word document
         doc.save(docx_path)
-
-        # Optional: delete the PDF after conversion
         os.remove(pdf_path)
 
         jobs[job_id]['status'] = 'COMPLETED'
-
     except Exception as e:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = str(e)
+
 
 # === Index Route ===
 @app.route('/')
