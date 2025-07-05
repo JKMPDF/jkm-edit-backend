@@ -3,7 +3,11 @@ services:
     name: jkm-edit-backend
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && mkdir -p uploads outputs
+    # This new section tells Render to install Tesseract first
+    buildpacks:
+      - heroku/python
+      - https://github.com/heroku/heroku-buildpack-apt
+    buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app"
     healthCheckPath: /
     envVars:
