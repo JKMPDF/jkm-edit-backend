@@ -4,8 +4,8 @@ import threading
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from pdf2image import convert_from_path
+import pytesseract
 from docx import Document
-from docx.shared import Inches
 from PIL import Image
 
 app = Flask(__name__)
@@ -14,44 +14,52 @@ CORS(app, resources={r"/api/*": {"origins": ["https://jkmpdf.github.io", "https:
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 OUTPUT_FOLDER = os.path.join(BASE_DIR, 'outputs')
-TEMP_IMG_FOLDER = os.path.join(BASE_DIR, 'temp_images')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-os.makedirs(TEMP_IMG_FOLDER, exist_ok=True)
 
 jobs = {}
 
-def process_file(job_id, pdf_path, docx_path):
+# === OCR Word: Editable ===
+def process_ocr(job_id, pdf_path, docx_path):
     try:
         jobs[job_id]['status'] = 'PROCESSING'
-
-        # Convert PDF to images
-        images = convert_from_path(pdf_path, dpi=300, output_folder=TEMP_IMG_FOLDER, fmt='jpeg')
+        images = convert_from_path(pdf_path, dpi=300)
         doc = Document()
-
-        for image in images:
-            # Resize image to fit A4 (approx 6 inches width)
-            image_path = image.filename
-            doc.add_picture(image_path, width=Inches(6))
-            doc.add_page_break()
-
+        for img in images:
+            text = pytesseract.image_to_string(img, lang='eng')
+            doc.add_paragraph(text)
         doc.save(docx_path)
         jobs[job_id]['status'] = 'COMPLETED'
-
-        # Clean up temp images
-        for img_file in os.listdir(TEMP_IMG_FOLDER):
-            os.remove(os.path.join(TEMP_IMG_FOLDER, img_file))
-
     except Exception as e:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = str(e)
 
-@app.route('/')
-def index():
-    return "JKM Edit Photocopy Word Backend is running."
-
 @app.route('/api/ocr/upload', methods=['POST'])
-def upload_file():
+def upload_ocr():
+    return handle_upload(process_ocr, "ocr")
+
+# === Photocopy-style Word ===
+def process_photocopy(job_id, pdf_path, docx_path):
+    try:
+        jobs[job_id]['status'] = 'PROCESSING'
+        images = convert_from_path(pdf_path, dpi=300)
+        doc = Document()
+        for img in images:
+            img_path = f"{UPLOAD_FOLDER}/{job_id}_page.jpg"
+            img.save(img_path)
+            doc.add_picture(img_path, width=docx.shared.Inches(6.2))
+        doc.save(docx_path)
+        jobs[job_id]['status'] = 'COMPLETED'
+    except Exception as e:
+        jobs[job_id]['status'] = 'FAILED'
+        jobs[job_id]['error'] = str(e)
+
+@app.route('/api/photocopy/upload', methods=['POST'])
+def upload_photocopy():
+    return handle_upload(process_photocopy, "photocopy")
+
+# === Common Upload Logic ===
+def handle_upload(process_func, job_type):
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
     file = request.files['file']
@@ -66,24 +74,31 @@ def upload_file():
 
     file.save(pdf_path)
     jobs[job_id] = {'status': 'PENDING', 'pdf_path': pdf_path, 'docx_path': docx_path}
-    thread = threading.Thread(target=process_file, args=(job_id, pdf_path, docx_path))
+    thread = threading.Thread(target=process_func, args=(job_id, pdf_path, docx_path))
     thread.start()
 
     return jsonify({"jobId": job_id})
 
-@app.route('/api/ocr/status/<job_id>', methods=['GET'])
+# === Status & Download ===
+@app.route('/api/ocr/status/<job_id>')
+@app.route('/api/photocopy/status/<job_id>')
 def get_status(job_id):
     job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
     return jsonify({"status": job['status'], "error": job.get('error')})
 
-@app.route('/api/ocr/download/<job_id>', methods=['GET'])
+@app.route('/api/ocr/download/<job_id>')
+@app.route('/api/photocopy/download/<job_id>')
 def download_file(job_id):
     job = jobs.get(job_id)
     if not job or job['status'] != 'COMPLETED':
         return jsonify({"error": "File not ready or job failed"}), 404
-    return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"photocopy_{job_id}.docx")
+    return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"{job_id}.docx")
+
+@app.route('/')
+def home():
+    return "JKM Edit OCR & Photocopy backend is running."
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
