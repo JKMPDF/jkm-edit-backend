@@ -1,10 +1,5 @@
 Flask
-gunicorn
+Flask-Cors
 python-docx
 PyMuPDF
-Flask-Cors
-pytesseract
 Pillow
-pandas
-camelot-py[cv]
-opencv-python-headless
