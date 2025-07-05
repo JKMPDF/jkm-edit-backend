@@ -1,5 +1,2 @@
 Flask
 Flask-Cors
-python-docx
-PyMuPDF
-Pillow
