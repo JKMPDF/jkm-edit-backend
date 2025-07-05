@@ -1,46 +1,24 @@
-# Start with a standard Python 3.10 environment
-FROM python:3.10-slim
+# Dockerfile
+FROM ubuntu:22.04
 
-# Set the working directory inside the container
+# Set environment
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y libreoffice python3 python3-pip && \
+    apt-get clean
+
+# Install Python dependencies
+COPY requirements.txt /app/requirements.txt
 WORKDIR /app
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# --- Install Tesseract and its English language pack ---
-# This runs as the 'root' user to install system software
-RUN apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-eng
+# Copy your app files
+COPY . /app
 
-# Copy our requirements file into the container
-COPY requirements.txt .
+# Expose port
+EXPOSE 10000
 
-# Install the Python libraries
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of our application code into the container
-COPY . .
-
-# Tell the container to run our Gunicorn server when it starts
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app"]
-# Start with a standard Python 3.10 environment
-FROM python:3.10-slim
-
-# Set the working directory inside the container
-WORKDIR /app
-
-# --- Install System Dependencies for Camelot and Tesseract ---
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    ghostscript \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy our requirements file into the container
-COPY requirements.txt .
-
-# Install the Python libraries
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of our application code into the container
-COPY . .
-
-# Tell the container to run our Gunicorn server when it starts
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "app:app"]
+# Run the app
+CMD ["python3", "app.py"]
