@@ -1,29 +1,14 @@
-FROM ubuntu:22.04
+FROM python:3.10-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install dependencies
 RUN apt-get update && apt-get install -y \
-    libreoffice \
-    tesseract-ocr \
     poppler-utils \
-    python3 \
-    python3-pip \
-    fonts-dejavu \
-    curl \
-    unzip \
-    ghostscript \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
+    libgl1 \
     && apt-get clean
 
-COPY requirements.txt /app/requirements.txt
 WORKDIR /app
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-COPY . /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
 EXPOSE 10000
-CMD ["python3", "app.py"]
+CMD ["python", "app.py"]
