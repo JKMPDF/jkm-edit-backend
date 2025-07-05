@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: jkm-edit-backend
-    # THIS IS THE KEY CHANGE: We are switching to the Docker environment
-    env: docker 
-    plan: free
-    healthCheckPath: /
-    # The Docker section tells Render how to build our environment
-    dockerfile: Dockerfile
