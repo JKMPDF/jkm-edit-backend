@@ -1,13 +1,12 @@
 import os
 import uuid
 import threading
-import subprocess
-import re
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from pdf2image import convert_from_path
-import pytesseract
 from docx import Document
+from docx.shared import Inches
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ["https://jkmpdf.github.io", "https://www.jkmedit.in", "https://jkmedit.in"]}})
@@ -20,34 +19,30 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 jobs = {}
 
-def clean_text(text):
-    # Remove null bytes and all control characters except line breaks
-    text = text.replace('\x00', '')
-    text = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u0080-\uFFFF]', '', text)
-    return text.strip()
-
 def process_file(job_id, pdf_path, docx_path):
     try:
         jobs[job_id]['status'] = 'PROCESSING'
 
+        # Convert PDF pages to images
         images = convert_from_path(pdf_path, dpi=300)
         doc = Document()
 
         for img in images:
-            raw_text = pytesseract.image_to_string(img, lang='eng')
-            cleaned_text = clean_text(raw_text)
-            doc.add_paragraph(cleaned_text)
+            temp_img_path = os.path.join(OUTPUT_FOLDER, f"{uuid.uuid4()}.png")
+            img.save(temp_img_path)
+            doc.add_picture(temp_img_path, width=Inches(6.5))  # fit to page width
+            doc.add_paragraph()  # spacing between pages
+            os.remove(temp_img_path)  # delete image after inserting
 
         doc.save(docx_path)
         jobs[job_id]['status'] = 'COMPLETED'
-
     except Exception as e:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = str(e)
 
 @app.route('/')
 def index():
-    return "JKM Edit OCR Backend is running."
+    return "JKM Edit OCR Photocopy Backend is running."
 
 @app.route('/api/ocr/upload', methods=['POST'])
 def upload_file():
@@ -82,7 +77,7 @@ def download_file(job_id):
     job = jobs.get(job_id)
     if not job or job['status'] != 'COMPLETED':
         return jsonify({"error": "File not ready or job failed"}), 404
-    return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"converted_{job_id}.docx")
+    return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"photocopy_{job_id}.docx")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
