@@ -3,11 +3,12 @@ import uuid
 import threading
 import fitz  # PyMuPDF
 import traceback
-import pytesseract
+import io
 from PIL import Image
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # --- Basic App Setup ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,47 +23,82 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 jobs = {}
 
-# === NEW AND IMPROVED OCR CONVERSION FUNCTION ===
-def convert_pdf_with_ocr(pdf_path, docx_path):
+# === THE NEW LAYOUT-AWARE CONVERSION FUNCTION ===
+def convert_with_layout_analysis(pdf_path, docx_path):
     try:
         pdf_document = fitz.open(pdf_path)
         word_document = Document()
         
         for page_num in range(len(pdf_document)):
             page = pdf_document.load_page(page_num)
+            page_width = page.rect.width
+
+            # --- 1. EXTRACT IMAGES ---
+            # Get all image objects from the page
+            image_list = page.get_images(full=True)
+            for img_index, img in enumerate(image_list):
+                xref = img[0]
+                base_image = pdf_document.extract_image(xref)
+                image_bytes = base_image["image"]
+                
+                # Add the image to the Word document
+                try:
+                    image_stream = io.BytesIO(image_bytes)
+                    word_document.add_picture(image_stream)
+                except Exception as e:
+                    print(f"Could not add image {img_index}: {e}")
+
+            # --- 2. EXTRACT TEXT WITH POSITIONING ---
+            # The "dict" option is powerful. It gives us blocks of text with coordinates.
+            blocks = page.get_text("dict", flags=fitz.TEXTFLAGS_BLOCKS)["blocks"]
+            for b in blocks:
+                if "lines" in b:  # Check if the block contains text
+                    full_text = ""
+                    for l in b["lines"]:
+                        for s in l["spans"]:
+                            full_text += s["text"]
+                        full_text += "\n" # Add a newline for each line in the original block
+                    
+                    p = word_document.add_paragraph()
+                    
+                    # --- Layout Logic ---
+                    # Get the block's bounding box coordinates (x0, y0, x1, y1)
+                    bbox = b["bbox"]
+                    
+                    # Simple alignment based on horizontal position
+                    if bbox[0] > page_width * 0.6: # Starts far to the right
+                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    elif (bbox[0] > page_width * 0.35 and bbox[2] < page_width * 0.65): # Roughly centered
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    else:
+                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    
+                    p.add_run(full_text.strip())
             
-            # Render page to an image (pixmap)
-            pix = page.get_pixmap(dpi=300) # Higher DPI for better OCR
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            
-            # Use Tesseract to do OCR on the image
-            text = pytesseract.image_to_string(img, lang='eng')
-            
-            # Add the extracted text to the Word document
-            word_document.add_paragraph(text)
+            # Add a page break to separate pages
             if page_num < len(pdf_document) - 1:
                 word_document.add_page_break()
         
         word_document.save(docx_path)
-        return True, "OCR Conversion successful"
+        return True, "Layout-aware conversion successful"
     except Exception as e:
-        print(f"!!! OCR CONVERSION THREAD FAILED. Error: {e}")
+        print(f"!!! LAYOUT CONVERSION THREAD FAILED. Error: {e}")
         traceback.print_exc()
         return False, str(e)
 
 # --- Worker Function for Threading ---
 def process_file(job_id, pdf_path, docx_path):
-    print(f"--- Starting OCR conversion thread for job {job_id} ---")
+    print(f"--- Starting Layout-Aware conversion for job {job_id} ---")
     jobs[job_id]['status'] = 'PROCESSING'
-    # Call the new OCR function
-    success, message = convert_pdf_with_ocr(pdf_path, docx_path)
+    # IMPORTANT: We are now calling our new, intelligent function
+    success, message = convert_with_layout_analysis(pdf_path, docx_path)
     if success:
         jobs[job_id]['status'] = 'COMPLETED'
-        print(f"--- OCR Conversion COMPLETED for job {job_id} ---")
+        print(f"--- Layout-Aware Conversion COMPLETED for job {job_id} ---")
     else:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = message
-        print(f"--- OCR Conversion FAILED for job {job_id} ---")
+        print(f"--- Layout-Aware Conversion FAILED for job {job_id} ---")
 
 # --- API Endpoints (No changes from here down) ---
 @app.route('/api/ocr/upload', methods=['POST'])
