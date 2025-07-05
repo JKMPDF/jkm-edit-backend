@@ -5,8 +5,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from pdf2image import convert_from_path
 from docx import Document
+from docx.shared import Inches
 from PIL import Image
-import pytesseract
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ["https://jkmpdf.github.io", "https://www.jkmedit.in", "https://jkmedit.in"]}})
@@ -14,8 +14,10 @@ CORS(app, resources={r"/api/*": {"origins": ["https://jkmpdf.github.io", "https:
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 OUTPUT_FOLDER = os.path.join(BASE_DIR, 'outputs')
+TEMP_IMG_FOLDER = os.path.join(BASE_DIR, 'temp_images')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(TEMP_IMG_FOLDER, exist_ok=True)
 
 jobs = {}
 
@@ -23,25 +25,30 @@ def process_file(job_id, pdf_path, docx_path):
     try:
         jobs[job_id]['status'] = 'PROCESSING'
 
-        images = convert_from_path(pdf_path, dpi=300)
+        # Convert PDF to images
+        images = convert_from_path(pdf_path, dpi=300, output_folder=TEMP_IMG_FOLDER, fmt='jpeg')
         doc = Document()
 
-        for i, img in enumerate(images):
-            # OCR with layout mode
-            text = pytesseract.image_to_string(img, lang='eng', config='--psm 6')
-            doc.add_paragraph(f"--- Page {i+1} ---")
-            doc.add_paragraph(text)
+        for image in images:
+            # Resize image to fit A4 (approx 6 inches width)
+            image_path = image.filename
+            doc.add_picture(image_path, width=Inches(6))
             doc.add_page_break()
 
         doc.save(docx_path)
         jobs[job_id]['status'] = 'COMPLETED'
+
+        # Clean up temp images
+        for img_file in os.listdir(TEMP_IMG_FOLDER):
+            os.remove(os.path.join(TEMP_IMG_FOLDER, img_file))
+
     except Exception as e:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = str(e)
 
 @app.route('/')
 def index():
-    return "JKM Edit OCR Editable Word Backend is running."
+    return "JKM Edit Photocopy Word Backend is running."
 
 @app.route('/api/ocr/upload', methods=['POST'])
 def upload_file():
@@ -76,7 +83,7 @@ def download_file(job_id):
     job = jobs.get(job_id)
     if not job or job['status'] != 'COMPLETED':
         return jsonify({"error": "File not ready or job failed"}), 404
-    return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"editable_{job_id}.docx")
+    return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"photocopy_{job_id}.docx")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
