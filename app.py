@@ -62,6 +62,23 @@ def download_file(job_id):
     if not job or job['status'] != 'COMPLETED':
         return jsonify({"error": "File not ready or job failed"}), 404
     return send_from_directory(OUTPUT_FOLDER, f"{job_id}.docx", as_attachment=True, download_name=f"converted_{job_id}.docx")
+from flask import Flask, request, send_file
+import os
+
+app = Flask(__name__)
+
+@app.route('/convert', methods=['POST'])
+def convert_pdf_to_word():
+    file = request.files['file']
+    file.save("input.pdf")
+
+    # Do your OCR processing and save as output.docx
+    output_path = "outputs/output.docx"
+    
+    return send_file(output_path, as_attachment=True)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
 
 @app.route('/')
 def index():
