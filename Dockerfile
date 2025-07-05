@@ -27,3 +27,7 @@ EXPOSE 10000
 
 # ✅ Start the app
 CMD ["python3", "app.py"]
+
+git add .
+git commit -m "Fix Dockerfile for Render LibreOffice"
+git push origin main
