@@ -1,5 +1,3 @@
-# ===================== requirements.txt =====================
-# Save as: requirements.txt
 Flask
 Flask-Cors
 pdf2docx
