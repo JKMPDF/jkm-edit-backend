@@ -23,82 +23,78 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 jobs = {}
 
-# === THE NEW LAYOUT-AWARE CONVERSION FUNCTION ===
-def convert_with_layout_analysis(pdf_path, docx_path):
+# === THE NEW HIGH-FIDELITY "PAGE FLOW" CONVERSION FUNCTION ===
+def convert_with_page_flow(pdf_path, docx_path):
     try:
         pdf_document = fitz.open(pdf_path)
         word_document = Document()
         
         for page_num in range(len(pdf_document)):
             page = pdf_document.load_page(page_num)
-            page_width = page.rect.width
-
-            # --- 1. EXTRACT IMAGES ---
-            # Get all image objects from the page
-            image_list = page.get_images(full=True)
-            for img_index, img in enumerate(image_list):
-                xref = img[0]
-                base_image = pdf_document.extract_image(xref)
-                image_bytes = base_image["image"]
-                
-                # Add the image to the Word document
-                try:
-                    image_stream = io.BytesIO(image_bytes)
-                    word_document.add_picture(image_stream)
-                except Exception as e:
-                    print(f"Could not add image {img_index}: {e}")
-
-            # --- 2. EXTRACT TEXT WITH POSITIONING ---
-            # The "dict" option is powerful. It gives us blocks of text with coordinates.
-            blocks = page.get_text("dict", flags=fitz.TEXTFLAGS_BLOCKS)["blocks"]
+            
+            # === THE KEY CHANGE: GET ALL ELEMENTS (TEXT AND IMAGES) AND SORT THEM ===
+            # The 'sort=True' argument is crucial. It sorts blocks by their top-to-bottom position.
+            blocks = page.get_text("dict", sort=True)["blocks"]
+            
             for b in blocks:
-                if "lines" in b:  # Check if the block contains text
-                    full_text = ""
-                    for l in b["lines"]:
-                        for s in l["spans"]:
-                            full_text += s["text"]
-                        full_text += "\n" # Add a newline for each line in the original block
-                    
+                # --- CHECK THE TYPE OF ELEMENT ---
+                if b['type'] == 0: # This is a text block
+                    # --- Improved paragraph handling to remove extra spaces ---
                     p = word_document.add_paragraph()
                     
-                    # --- Layout Logic ---
-                    # Get the block's bounding box coordinates (x0, y0, x1, y1)
-                    bbox = b["bbox"]
+                    # Reconstruct the paragraph correctly
+                    full_paragraph_text = ""
+                    for l in b["lines"]:
+                        for s in l["spans"]:
+                            full_paragraph_text += s["text"]
+                        # Add a space between lines, not a newline, to form a proper paragraph
+                        full_paragraph_text += " "
                     
-                    # Simple alignment based on horizontal position
-                    if bbox[0] > page_width * 0.6: # Starts far to the right
+                    # Add the complete, reconstructed paragraph to the document
+                    p.add_run(full_paragraph_text.strip())
+
+                    # Apply alignment based on the block's position
+                    bbox = b["bbox"]
+                    page_width = page.rect.width
+                    if bbox[0] > page_width * 0.6:
                         p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                    elif (bbox[0] > page_width * 0.35 and bbox[2] < page_width * 0.65): # Roughly centered
+                    elif (bbox[0] > page_width * 0.35 and bbox[2] < page_width * 0.65):
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     else:
                         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                    
-                    p.add_run(full_text.strip())
-            
-            # Add a page break to separate pages
+
+                elif b['type'] == 1: # This is an image block
+                    try:
+                        # Extract the image bytes from the block
+                        image_bytes = b["image"]
+                        image_stream = io.BytesIO(image_bytes)
+                        # Add the image in its correct position in the flow
+                        word_document.add_picture(image_stream)
+                    except Exception as e:
+                        print(f"Could not process image in block: {e}")
+
             if page_num < len(pdf_document) - 1:
                 word_document.add_page_break()
         
         word_document.save(docx_path)
-        return True, "Layout-aware conversion successful"
+        return True, "High-fidelity conversion successful"
     except Exception as e:
-        print(f"!!! LAYOUT CONVERSION THREAD FAILED. Error: {e}")
+        print(f"!!! PAGE FLOW CONVERSION FAILED. Error: {e}")
         traceback.print_exc()
         return False, str(e)
 
-# --- Worker Function for Threading ---
+# --- Worker Function for Threading (now calls the new function) ---
 def process_file(job_id, pdf_path, docx_path):
-    print(f"--- Starting Layout-Aware conversion for job {job_id} ---")
+    print(f"--- Starting High-Fidelity conversion for job {job_id} ---")
     jobs[job_id]['status'] = 'PROCESSING'
-    # IMPORTANT: We are now calling our new, intelligent function
-    success, message = convert_with_layout_analysis(pdf_path, docx_path)
+    success, message = convert_with_page_flow(pdf_path, docx_path)
     if success:
         jobs[job_id]['status'] = 'COMPLETED'
-        print(f"--- Layout-Aware Conversion COMPLETED for job {job_id} ---")
+        print(f"--- High-Fidelity Conversion COMPLETED for job {job_id} ---")
     else:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = message
-        print(f"--- Layout-Aware Conversion FAILED for job {job_id} ---")
+        print(f"--- High-Fidelity Conversion FAILED for job {job_id} ---")
 
 # --- API Endpoints (No changes from here down) ---
 @app.route('/api/ocr/upload', methods=['POST'])
@@ -119,6 +115,8 @@ def upload_file():
         thread.start()
         return jsonify({"jobId": job_id})
     return jsonify({"error": "An unknown error occurred"}), 500
+
+# ... (the rest of the file: get_status, download_file, etc. remains the same) ...
 
 @app.route('/api/ocr/status/<job_id>', methods=['GET'])
 def get_status(job_id):
@@ -143,28 +141,3 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True)
-# (imports would include camelot and pandas)
-
-def convert_with_tables_and_layout(pdf_path, docx_path):
-    # ... setup ...
-    for page_num in range(len(pdf_document)):
-        page = pdf_document.load_page(page_num)
-
-        # --- 1. EXTRACT TABLES FIRST ---
-        tables = camelot.read_pdf(pdf_path, pages=str(page_num + 1))
-        
-        for table in tables:
-            # Create a real Word table
-            word_table = word_document.add_table(rows=table.df.shape[0], cols=table.df.shape[1])
-            word_table.style = 'Table Grid'
-            # Populate the table cell by cell
-            for i, row in table.df.iterrows():
-                for j, cell_text in enumerate(row):
-                    word_table.cell(i, j).text = str(cell_text)
-        
-        # --- 2. EXTRACT IMAGES (same as before) ---
-        # ... image extraction code ...
-
-        # --- 3. EXTRACT TEXT (with logic to AVOID table text) ---
-        # ... text extraction code ...
-        # (This would need to be modified to check if a text block is inside a table area)
