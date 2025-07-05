@@ -30,18 +30,18 @@ jobs = {}
 # === OCR Processing Thread ===
 def process_file(job_id, pdf_path, docx_path):
     try:
-        jobs[job_id]['status'] = 'PROCESSING'
+        import re
 
-        with open(pdf_path, 'rb') as f:
-            if not f.read(5).startswith(b'%PDF'):
-                raise Exception("Uploaded file is not a valid PDF")
+        jobs[job_id]['status'] = 'PROCESSING'
 
         images = convert_from_path(pdf_path, dpi=300)
         doc = Document()
 
         def clean_text(text):
-            import re
-            return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text)
+            # Remove null bytes and non-printable/control characters
+            text = text.replace('\x00', '')
+            text = re.sub(r'[\x01-\x1F\x7F-\x9F]', '', text)
+            return text.encode('utf-8', 'ignore').decode('utf-8', 'ignore')
 
         for img in images:
             raw_text = pytesseract.image_to_string(img, lang='eng')
@@ -52,6 +52,7 @@ def process_file(job_id, pdf_path, docx_path):
         os.remove(pdf_path)
 
         jobs[job_id]['status'] = 'COMPLETED'
+
     except Exception as e:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = str(e)
