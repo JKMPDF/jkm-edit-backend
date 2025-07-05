@@ -143,3 +143,28 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True)
+# (imports would include camelot and pandas)
+
+def convert_with_tables_and_layout(pdf_path, docx_path):
+    # ... setup ...
+    for page_num in range(len(pdf_document)):
+        page = pdf_document.load_page(page_num)
+
+        # --- 1. EXTRACT TABLES FIRST ---
+        tables = camelot.read_pdf(pdf_path, pages=str(page_num + 1))
+        
+        for table in tables:
+            # Create a real Word table
+            word_table = word_document.add_table(rows=table.df.shape[0], cols=table.df.shape[1])
+            word_table.style = 'Table Grid'
+            # Populate the table cell by cell
+            for i, row in table.df.iterrows():
+                for j, cell_text in enumerate(row):
+                    word_table.cell(i, j).text = str(cell_text)
+        
+        # --- 2. EXTRACT IMAGES (same as before) ---
+        # ... image extraction code ...
+
+        # --- 3. EXTRACT TEXT (with logic to AVOID table text) ---
+        # ... text extraction code ...
+        # (This would need to be modified to check if a text block is inside a table area)
