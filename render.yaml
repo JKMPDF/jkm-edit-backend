@@ -1,15 +1,9 @@
 services:
   - type: web
     name: jkm-edit-backend
-    env: python
+    # THIS IS THE KEY CHANGE: We are switching to the Docker environment
+    env: docker 
     plan: free
-    # This new section tells Render to install Tesseract first
-    buildpacks:
-      - heroku/python
-      - https://github.com/heroku/heroku-buildpack-apt
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn app:app"
     healthCheckPath: /
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.6
+    # The Docker section tells Render how to build our environment
+    dockerfile: Dockerfile
