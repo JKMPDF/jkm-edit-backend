@@ -2,36 +2,34 @@ import os
 import uuid
 import threading
 import fitz  # PyMuPDF
+import traceback
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from docx import Document
-from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- NEW: Define the base directory of the application ---
-# This makes our file paths absolute and reliable on Render
+# --- Define the base directory of the application ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- BASIC APP SETUP ---
+# --- Basic App Setup ---
 app = Flask(__name__)
+# IMPORTANT: Make sure this URL is correct for your frontend
 CORS(app, resources={r"/api/*": {"origins": "https://jkmpdf.github.io"}})
 
-# --- CONFIGURATION (Now using absolute paths) ---
-# This joins the base directory path with our folder names
+# --- Configuration using absolute paths ---
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 OUTPUT_FOLDER = os.path.join(BASE_DIR, 'outputs')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
 
-# --- NEW: Ensure directories exist on startup ---
-# This is a fallback in case the build command has issues.
+# Ensure directories exist on startup
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-
+# In-memory dictionary to track jobs
 jobs = {}
 
-# --- THE CORE CONVERSION LOGIC (No changes here, but included for completeness) ---
+# --- The Core Conversion Logic ---
 def convert_pdf_with_layout(pdf_path, docx_path):
     try:
         pdf_document = fitz.open(pdf_path)
@@ -61,15 +59,12 @@ def convert_pdf_with_layout(pdf_path, docx_path):
         word_document.save(docx_path)
         return True, "Conversion successful"
     except Exception as e:
-        # --- MODIFIED: More detailed error logging ---
-        print(f"!!! CONVERSION THREAD FAILED for job. Error: {e}")
-        import traceback
-        traceback.print_exc() # This will print the full error to the logs
+        print(f"!!! CONVERSION THREAD FAILED. Error: {e}")
+        traceback.print_exc()
         return False, str(e)
 
-# --- WORKER FUNCTION FOR THREADING ---
+# --- Worker Function for Threading ---
 def process_file(job_id, pdf_path, docx_path):
-    # --- MODIFIED: Add a print statement to see if the thread starts ---
     print(f"--- Starting conversion thread for job {job_id} ---")
     jobs[job_id]['status'] = 'PROCESSING'
     success, message = convert_pdf_with_layout(pdf_path, docx_path)
@@ -81,40 +76,57 @@ def process_file(job_id, pdf_path, docx_path):
         jobs[job_id]['error'] = message
         print(f"--- Conversion FAILED for job {job_id} ---")
 
-# --- API ENDPOINTS (No changes here, but included for completeness) ---
+# --- API Endpoints ---
 @app.route('/api/ocr/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files: return jsonify({"error": "No file part"}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
     file = request.files['file']
-    if file.filename == '': return jsonify({"error": "No selected file"}), 400
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
     if file:
-        job__id = str(uuid.uuid4())
+        # === THE FIX IS HERE ===
+        # Correctly named 'job_id' with one underscore
+        job_id = str(uuid.uuid4())
+        
         filename = f"{job_id}.pdf"
         output_filename = f"{job_id}.docx"
         pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         docx_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+        
         file.save(pdf_path)
+        
         jobs[job_id] = {'status': 'PENDING', 'pdf_path': pdf_path, 'docx_path': docx_path}
-        # --- MODIFIED: Add a print statement before starting thread ---
+        
         print(f"File saved to {pdf_path}. Starting thread for job {job_id}.")
         thread = threading.Thread(target=process_file, args=(job_id, pdf_path, docx_path))
         thread.start()
+        
         return jsonify({"jobId": job_id})
+    return jsonify({"error": "An unknown error occurred"}), 500
 
 @app.route('/api/ocr/status/<job_id>', methods=['GET'])
 def get_status(job_id):
     job = jobs.get(job_id)
-    if not job: return jsonify({"error": "Job not found"}), 404
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
     response = {"status": job['status']}
-    if job['status'] == 'FAILED': response['error'] = job.get('error', 'An unknown error occurred.')
+    if job['status'] == 'FAILED':
+        response['error'] = job.get('error', 'An unknown error occurred.')
     return jsonify(response)
 
 @app.route('/api/ocr/download/<job_id>', methods=['GET'])
 def download_file(job_id):
     job = jobs.get(job_id)
-    if not job or job['status'] != 'COMPLETED': return jsonify({"error": "File not ready or job failed"}), 404
+    if not job or job['status'] != 'COMPLETED':
+        return jsonify({"error": "File not ready or job failed"}), 404
     try:
-        return send_from_directory(app.config['OUTPUT_FOLDER'], f"{job_id}.docx", as_attachment=True, download_name=f"converted_{job_id}.docx")
+        return send_from_directory(
+            app.config['OUTPUT_FOLDER'],
+            f"{job_id}.docx",
+            as_attachment=True,
+            download_name=f"converted_{job_id}.docx"
+        )
     except FileNotFoundError:
         return jsonify({"error": "File not found."}), 404
 
