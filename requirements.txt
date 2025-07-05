@@ -5,3 +5,6 @@ PyMuPDF
 Flask-Cors
 pytesseract
 Pillow
+pandas
+camelot-py[cv]
+opencv-python-headless
