@@ -14,7 +14,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # --- Basic App Setup ---
 app = Flask(__name__)
 # IMPORTANT: Make sure this URL is correct for your frontend
-CORS(app, resources={r"/api/*": {"origins": ["https://jkmpdf.github.io", "https://www.jkmedit.in"]}})
+CORS(app, resources={r"/api/*": {"origins": ["https://jkmpdf.github.io", "https://www.jkmedit.in", "https://jkmedit.in"]}})
 
 # --- Configuration using absolute paths ---
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
