@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
 
 # --- Basic App Setup ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,80 +24,114 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 jobs = {}
 
-# === THE NEW HIGH-FIDELITY "PAGE FLOW" CONVERSION FUNCTION ===
-def convert_with_page_flow(pdf_path, docx_path):
+# === THE NEW DOCUMENT RECONSTRUCTION ENGINE ===
+def convert_with_document_reconstruction(pdf_path, docx_path):
     try:
         pdf_document = fitz.open(pdf_path)
         word_document = Document()
         
         for page_num in range(len(pdf_document)):
             page = pdf_document.load_page(page_num)
+            page_width = page.rect.width
             
-            # === THE KEY CHANGE: GET ALL ELEMENTS (TEXT AND IMAGES) AND SORT THEM ===
-            # The 'sort=True' argument is crucial. It sorts blocks by their top-to-bottom position.
-            blocks = page.get_text("dict", sort=True)["blocks"]
+            # --- STEP 1: GATHER ALL ELEMENTS ---
+            # Get text blocks and their bounding boxes
+            text_blocks = page.get_text("dict", flags=0)["blocks"]
             
-            for b in blocks:
-                # --- CHECK THE TYPE OF ELEMENT ---
-                if b['type'] == 0: # This is a text block
-                    # --- Improved paragraph handling to remove extra spaces ---
-                    p = word_document.add_paragraph()
-                    
-                    # Reconstruct the paragraph correctly
-                    full_paragraph_text = ""
-                    for l in b["lines"]:
-                        for s in l["spans"]:
-                            full_paragraph_text += s["text"]
-                        # Add a space between lines, not a newline, to form a proper paragraph
-                        full_paragraph_text += " "
-                    
-                    # Add the complete, reconstructed paragraph to the document
-                    p.add_run(full_paragraph_text.strip())
+            # Get drawings (vector graphics like signatures) and images
+            # We will render them to PNGs to insert them
+            all_elements = []
 
-                    # Apply alignment based on the block's position
-                    bbox = b["bbox"]
-                    page_width = page.rect.width
-                    if bbox[0] > page_width * 0.6:
-                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                    elif (bbox[0] > page_width * 0.35 and bbox[2] < page_width * 0.65):
-                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    else:
-                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            # Add text elements
+            for block in text_blocks:
+                if 'lines' in block:
+                    all_elements.append({
+                        "type": "text",
+                        "bbox": block["bbox"],
+                        "content": block
+                    })
+            
+            # Add image elements (both raster and vector)
+            # This is more robust for finding things like signatures
+            for drawing in page.get_drawings():
+                # For each drawing, get its bounding box and render it
+                rect = drawing['rect']
+                if rect.is_empty or rect.width < 1 or rect.height < 1:
+                    continue
+                pix = page.get_pixmap(clip=rect, dpi=200)
+                all_elements.append({
+                    "type": "image",
+                    "bbox": (rect.x0, rect.y0, rect.x1, rect.y1),
+                    "content": pix.tobytes()
+                })
 
-                elif b['type'] == 1: # This is an image block
+            # --- STEP 2: SORT ALL ELEMENTS BY VERTICAL POSITION ---
+            # This is the key to preserving the document's flow
+            all_elements.sort(key=lambda item: item["bbox"][1]) # Sort by y0 (top coordinate)
+
+            # --- STEP 3: REBUILD THE DOCUMENT IN THE CORRECT ORDER ---
+            last_y1 = 0
+            current_paragraph = None
+            
+            for element in all_elements:
+                bbox = element["bbox"]
+                
+                if element["type"] == "text":
+                    # --- Advanced Paragraph Logic ---
+                    # Check vertical distance to decide if it's a new paragraph
+                    if current_paragraph is None or bbox[1] > (last_y1 + 10): # 10 is a threshold
+                        current_paragraph = word_document.add_paragraph()
+                        # Set alignment for the new paragraph
+                        if bbox[0] > page_width * 0.6:
+                            current_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        elif (bbox[0] > page_width * 0.35 and bbox[2] < page_width * 0.65):
+                            current_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        else:
+                            current_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    
+                    # Add text to the current paragraph
+                    for line in element["content"]["lines"]:
+                        line_text = "".join([span["text"] for span in line["spans"]])
+                        current_paragraph.add_run(line_text + " ")
+                    
+                    last_y1 = bbox[3] # Update the last vertical position
+
+                elif element["type"] == "image":
+                    # We are done with the previous paragraph
+                    current_paragraph = None 
                     try:
-                        # Extract the image bytes from the block
-                        image_bytes = b["image"]
-                        image_stream = io.BytesIO(image_bytes)
-                        # Add the image in its correct position in the flow
+                        image_stream = io.BytesIO(element["content"])
                         word_document.add_picture(image_stream)
                     except Exception as e:
-                        print(f"Could not process image in block: {e}")
-
+                        print(f"Could not add image element: {e}")
+                    last_y1 = bbox[3]
+            
             if page_num < len(pdf_document) - 1:
                 word_document.add_page_break()
-        
+                
         word_document.save(docx_path)
-        return True, "High-fidelity conversion successful"
+        return True, "Document Reconstruction successful"
     except Exception as e:
-        print(f"!!! PAGE FLOW CONVERSION FAILED. Error: {e}")
+        print(f"!!! DOCUMENT RECONSTRUCTION FAILED. Error: {e}")
         traceback.print_exc()
         return False, str(e)
 
-# --- Worker Function for Threading (now calls the new function) ---
+# --- Worker Function (now calls the new reconstruction engine) ---
 def process_file(job_id, pdf_path, docx_path):
-    print(f"--- Starting High-Fidelity conversion for job {job_id} ---")
+    print(f"--- Starting Document Reconstruction for job {job_id} ---")
     jobs[job_id]['status'] = 'PROCESSING'
-    success, message = convert_with_page_flow(pdf_path, docx_path)
+    success, message = convert_with_document_reconstruction(pdf_path, docx_path)
     if success:
         jobs[job_id]['status'] = 'COMPLETED'
-        print(f"--- High-Fidelity Conversion COMPLETED for job {job_id} ---")
+        print(f"--- Document Reconstruction COMPLETED for job {job_id} ---")
     else:
         jobs[job_id]['status'] = 'FAILED'
         jobs[job_id]['error'] = message
-        print(f"--- High-Fidelity Conversion FAILED for job {job_id} ---")
+        print(f"--- Document Reconstruction FAILED for job {job_id} ---")
 
-# --- API Endpoints (No changes from here down) ---
+# --- API Endpoints (No changes needed here) ---
+# ... (The rest of your app.py remains the same) ...
+
 @app.route('/api/ocr/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files: return jsonify({"error": "No file part"}), 400
@@ -115,8 +150,6 @@ def upload_file():
         thread.start()
         return jsonify({"jobId": job_id})
     return jsonify({"error": "An unknown error occurred"}), 500
-
-# ... (the rest of the file: get_status, download_file, etc. remains the same) ...
 
 @app.route('/api/ocr/status/<job_id>', methods=['GET'])
 def get_status(job_id):
