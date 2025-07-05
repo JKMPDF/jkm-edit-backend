@@ -1,14 +1,32 @@
-FROM python:3.10-slim
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    tesseract-ocr \
     poppler-utils \
-    libgl1 \
-    && apt-get clean
+    fonts-dejavu \
+    curl \
+    ghostscript \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libpng-dev \
+    libpoppler-cpp-dev \
+    build-essential \
+    unzip && \
+    apt-get clean
 
+COPY requirements.txt /app/requirements.txt
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY . /app
 
 EXPOSE 10000
-CMD ["python", "app.py"]
+CMD ["python3", "app.py"]
